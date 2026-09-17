@@ -4,6 +4,7 @@ import { GoogleGenAI } from '@google/genai';
 import { orchestrator } from './src/engine/orchestrator';
 import { capabilityRegistry } from './src/engine/capabilityRegistry';
 import { fixVerifier } from './src/engine/fixVerifier';
+import { remediationService } from './src/engine/remediationService';
 import { securityValidationService } from './src/engine/securityValidationService';
 import { Finding, SecurityValidationFinding } from './src/types';
 
@@ -299,12 +300,211 @@ Respond with a JSON object strictly following this structure:
 
     res.json({
       repoName: `${owner}/${repo}`,
+      repoOwner: owner,
+      repoOnly: repo,
       branch,
       totalMatchedFiles: candidates.length,
       fetchedFilesCount: Object.keys(files).length,
       files,
     });
   }
+
+  // 6b. GitHub Auto-Remediation: Generate & Validate Structured Fix
+  app.post('/api/github/prepare-fix', async (req: Request, res: Response) => {
+    try {
+      const { finding, fileContent, allFiles, projectName, repoName } = req.body;
+      if (!finding || !finding.file) {
+        return res.status(400).json({ error: 'A valid finding object with file path is required.' });
+      }
+
+      const proposal = await remediationService.prepareRemediation(
+        finding,
+        fileContent || (allFiles && allFiles[finding.file]) || '',
+        allFiles || {},
+        projectName,
+        repoName
+      );
+
+      res.json(proposal);
+    } catch (err: any) {
+      console.error('GitHub remediation prepare error:', err);
+      res.status(500).json({ error: err.message || 'Failed to prepare automated code remediation.' });
+    }
+  });
+
+  // 6c. GitHub Auto-Remediation: Create Real Git Branch, Commit, Push & Pull Request
+  app.post('/api/github/create-fix-pr', async (req: Request, res: Response) => {
+    try {
+      const {
+        repoOwner,
+        repoName,
+        baseBranch,
+        branchName,
+        commitMessage,
+        prTitle,
+        prBody,
+        changes,
+        finding,
+      } = req.body;
+
+      if (!repoOwner || !repoName) {
+        return res.status(400).json({
+          error: 'Target GitHub repository owner and repository name are required to publish a Pull Request.',
+        });
+      }
+
+      if (!changes || !Array.isArray(changes) || changes.length === 0) {
+        return res.status(400).json({
+          error: 'At least one modified file change is required to create a commit and pull request.',
+        });
+      }
+
+      if (!finding) {
+        return res.status(400).json({ error: 'Finding context is required.' });
+      }
+
+      // Optional client header override (never logged or exposed)
+      const overrideToken = (req.headers['x-github-token'] as string) || req.body.token || req.body.overrideToken;
+
+      const result = await remediationService.createFixPullRequest({
+        repoOwner,
+        repoName,
+        baseBranch,
+        branchName,
+        commitMessage: commitMessage || `fix(${finding.category?.toLowerCase() || 'code'}): resolve ${finding.title?.toLowerCase() || 'issue'}`,
+        prTitle: prTitle || `CodeLens: Fix ${finding.title} in ${finding.file}`,
+        prBody,
+        changes,
+        finding,
+        overrideToken,
+      });
+
+      res.json(result);
+    } catch (err: any) {
+      console.error('GitHub PR creation error:', err);
+      res.status(500).json({ error: err.message || 'Failed to create real GitHub Pull Request.' });
+    }
+  });
+
+  // 6d. Check GitHub Authentication Status (Safe metadata only, no token leakage)
+  app.get('/api/github/auth-status', async (req: Request, res: Response) => {
+    try {
+      const token = (req.headers['x-github-token'] as string) || process.env.GITHUB_TOKEN;
+      if (!token) {
+        return res.json({
+          authenticated: false,
+          hasServerToken: false,
+          message: 'No GitHub token configured. Please configure GITHUB_TOKEN in your environment.',
+        });
+      }
+
+      const userRes = await fetch('https://api.github.com/user', {
+        headers: {
+          Authorization: `token ${token.trim()}`,
+          'User-Agent': 'CodeLens-AppSec-Agent',
+        },
+      });
+
+      if (!userRes.ok) {
+        return res.json({
+          authenticated: false,
+          hasServerToken: Boolean(process.env.GITHUB_TOKEN),
+          message: `GitHub token rejected with status ${userRes.status}. Check permissions.`,
+        });
+      }
+
+      const userData = await userRes.json();
+
+      // Fetch user's own writable repositories so the UI can auto-populate
+      let userRepos: Array<{ fullName: string; name: string; owner: string; canPush: boolean }> = [];
+      try {
+        const reposRes = await fetch('https://api.github.com/user/repos?sort=updated&per_page=30', {
+          headers: {
+            Authorization: `token ${token.trim()}`,
+            'User-Agent': 'CodeLens-AppSec-Agent',
+          },
+        });
+        if (reposRes.ok) {
+          const list = await reposRes.json();
+          if (Array.isArray(list)) {
+            userRepos = list.map((r: any) => ({
+              fullName: r.full_name,
+              name: r.name,
+              owner: r.owner?.login || userData.login,
+              canPush: Boolean(r.permissions?.push),
+            }));
+          }
+        }
+      } catch (repoErr) {
+        console.warn('Could not fetch user repos list:', repoErr);
+      }
+
+      const defaultRepo = userRepos.find((r) => r.canPush)?.fullName || `${userData.login}/codelenssy`;
+
+      res.json({
+        authenticated: true,
+        hasServerToken: Boolean(process.env.GITHUB_TOKEN),
+        login: userData.login,
+        name: userData.name,
+        avatarUrl: userData.avatar_url,
+        userRepos,
+        defaultRepo,
+      });
+    } catch (err: any) {
+      res.json({
+        authenticated: false,
+        hasServerToken: Boolean(process.env.GITHUB_TOKEN),
+        message: err.message || 'Error reaching GitHub API.',
+      });
+    }
+  });
+
+  // 6e. Check write permissions for a specific repository
+  app.get('/api/github/check-repo-access', async (req: Request, res: Response) => {
+    try {
+      const owner = req.query.owner as string;
+      const repo = req.query.repo as string;
+      const overrideToken = (req.headers['x-github-token'] as string) || (req.query.token as string);
+      const token = overrideToken || process.env.GITHUB_TOKEN;
+
+      if (!owner || !repo) {
+        return res.status(400).json({ error: 'Owner and repo parameters are required.' });
+      }
+
+      if (!token) {
+        return res.json({ canPush: false, reason: 'No GitHub token configured.' });
+      }
+
+      const checkRes = await fetch(`https://api.github.com/repos/${owner}/${repo}`, {
+        headers: {
+          Authorization: `token ${token.trim()}`,
+          'User-Agent': 'CodeLens-AppSec-Agent',
+        },
+      });
+
+      if (!checkRes.ok) {
+        return res.json({
+          canPush: false,
+          status: checkRes.status,
+          reason: `Repository not accessible (${checkRes.status}). Check repository name or permissions.`,
+        });
+      }
+
+      const data = await checkRes.json();
+      const canPush = Boolean(data.permissions?.push);
+      res.json({
+        canPush,
+        defaultBranch: data.default_branch || 'main',
+        isFork: data.fork,
+        isPrivate: data.private,
+        reason: canPush
+          ? 'Direct write and branch creation access confirmed.'
+          : 'Read-only access. Direct push requires collaborator permissions; target your personal fork or connected repository instead.',
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Failed to check repository access.' });
+    }
+  });
 
   // 7. Security Validation - Engine Health Check
   app.get('/api/security-validation/health', async (_req: Request, res: Response) => {

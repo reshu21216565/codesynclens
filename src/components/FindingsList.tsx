@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { Finding, FindingCategory, FindingSeverity, FindingStatus } from '../types';
-import { Search, Filter, CheckCircle2, AlertTriangle, ShieldAlert, Bug, Flame, Trash2, Sparkles, ChevronRight } from 'lucide-react';
+import { Search, Filter, CheckCircle2, AlertTriangle, ShieldAlert, Bug, Flame, Trash2, Sparkles, ChevronRight, GitPullRequest } from 'lucide-react';
 
 interface FindingsListProps {
   findings: Finding[];
@@ -205,7 +205,13 @@ export const FindingsList: React.FC<FindingsListProps> = ({
                           Verified Fix
                         </span>
                       )}
-                      {finding.status === 'FIXED' && (
+                      {finding.fix?.pullRequestUrl && (
+                        <span className="text-[10px] px-1.5 py-0.2 rounded bg-purple-100 text-purple-800 font-bold flex items-center gap-1">
+                          <GitPullRequest className="w-2.5 h-2.5 text-purple-700" />
+                          PR #{finding.fix.pullRequestNumber}
+                        </span>
+                      )}
+                      {finding.status === 'FIXED' && !finding.fix?.pullRequestUrl && (
                         <span className="text-[10px] px-1.5 py-0.2 rounded bg-blue-100 text-blue-800 font-medium">
                           Fixed
                         </span>

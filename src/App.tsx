@@ -8,8 +8,10 @@ import { AnalysisProgress } from './components/AnalysisProgress';
 import { SummaryCard } from './components/SummaryCard';
 import { FindingsList } from './components/FindingsList';
 import { FindingDetail } from './components/FindingDetail';
+import { RemediationModal } from './components/RemediationModal';
 import { IntegrationsModal } from './components/IntegrationsModal';
 import { SecurityValidationView } from './components/SecurityValidationView';
+import { CodeLensFooter } from './components/CodeLensFooter';
 import { ArrowLeft, RefreshCw, CheckCircle2 } from 'lucide-react';
 
 interface Stage {
@@ -36,6 +38,10 @@ export default function App() {
   const [isIntegrationsModalOpen, setIsIntegrationsModalOpen] = useState(false);
   const [selectedFinding, setSelectedFinding] = useState<Finding | null>(null);
   const [activeCategoryFilter, setActiveCategoryFilter] = useState<string>('ALL');
+
+  // Remediation Modal State
+  const [remediationFinding, setRemediationFinding] = useState<Finding | null>(null);
+  const [isRemediationOpen, setIsRemediationOpen] = useState<boolean>(false);
 
   // Progress state
   const [isAnalyzing, setIsAnalyzing] = useState(false);
@@ -119,6 +125,14 @@ export default function App() {
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || 'Code analysis failed');
 
+        let repoOwner: string | undefined;
+        let repoName: string | undefined;
+        if (sourceType === 'GITHUB' && projectName.includes('/')) {
+          const parts = projectName.split('/');
+          repoOwner = parts[0];
+          repoName = parts[1];
+        }
+
         const newSession: AnalysisSession = {
           id: `real-${Date.now()}`,
           projectName,
@@ -129,6 +143,9 @@ export default function App() {
           findings: data.findings,
           summary: data.summary,
           status: 'COMPLETED',
+          repoOwner,
+          repoName,
+          defaultBranch: detail.match(/\(([^)]+)\)/)?.[1] || 'main',
         };
 
         setSession(newSession);
@@ -351,6 +368,19 @@ export default function App() {
         )}
       </main>
 
+      {/* Main Footer with Interactive TextHoverEffect (hidden on Security Validation view) */}
+      {activeView !== 'security' && (
+        <CodeLensFooter
+          onNewAnalysis={() => {
+            setInitialInputMethod('GITHUB');
+            setIsInputModalOpen(true);
+          }}
+          onOpenIntegrations={() => setIsIntegrationsModalOpen(true)}
+          onLoadDemo={handleLoadDemo}
+          onSelectView={(view) => setActiveView(view)}
+        />
+      )}
+
       {/* Input Modal */}
       <InputModal
         isOpen={isInputModalOpen}
@@ -368,6 +398,39 @@ export default function App() {
           onApplyFix={handleApplyFix}
           onMarkStatus={handleMarkStatus}
           onRunVerification={handleRunVerification}
+          onOpenRemediation={(finding) => {
+            setRemediationFinding(finding);
+            setIsRemediationOpen(true);
+          }}
+        />
+      )}
+
+      {/* CodeLens Real Remediation & Pull Request Modal */}
+      {isRemediationOpen && remediationFinding && session && (
+        <RemediationModal
+          isOpen={isRemediationOpen}
+          finding={remediationFinding}
+          fileContent={session.files[remediationFinding.file]}
+          allFiles={session.files}
+          projectName={session.projectName}
+          sessionRepoOwner={session.repoOwner}
+          sessionRepoName={session.repoName}
+          sessionBranch={session.defaultBranch || 'main'}
+          onClose={() => {
+            setIsRemediationOpen(false);
+            setRemediationFinding(null);
+          }}
+          onSuccess={(updatedFinding, updatedFiles) => {
+            setSession((prev) => {
+              if (!prev) return null;
+              return {
+                ...prev,
+                files: updatedFiles,
+                findings: prev.findings.map((f) => (f.id === updatedFinding.id ? updatedFinding : f)),
+              };
+            });
+            setSelectedFinding(updatedFinding);
+          }}
         />
       )}
 

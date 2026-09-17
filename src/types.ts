@@ -12,7 +12,7 @@ export type FindingSeverity = 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW' | 'INFO';
 
 export type ConfidenceLevel = 'HIGH' | 'MEDIUM' | 'LOW';
 
-export type FindingStatus = 'OPEN' | 'FIX_PROPOSED' | 'FIXED' | 'VERIFIED' | 'IGNORED';
+export type FindingStatus = 'OPEN' | 'FIX_PROPOSED' | 'FIXED' | 'VERIFIED' | 'IGNORED' | 'VALIDATION_FAILED';
 
 export interface FindingProvenance {
   source: string;
@@ -22,12 +22,85 @@ export interface FindingProvenance {
   corroboratedBy?: string[];
 }
 
+export interface FileChangeItem {
+  filePath: string;
+  originalContent?: string;
+  updatedContent: string;
+  diffSummary?: string;
+}
+
+export interface ValidationCheckItem {
+  name: string;
+  passed: boolean;
+  details: string;
+  type?: 'PATCH_CLEAN' | 'AST_RECHECK' | 'LINT_BUILD' | 'SECURITY';
+}
+
+export interface ValidationReport {
+  overallPassed: boolean;
+  checks: ValidationCheckItem[];
+  reanalysisSummary?: string;
+  executionLogs?: string[];
+}
+
 export interface FindingFix {
   description: string;
-  originalSnippet: string;
-  fixedSnippet: string;
+  originalSnippet?: string;
+  fixedSnippet?: string;
   applied: boolean;
   appliedAt?: string;
+  canAutoRemediate?: boolean;
+  safetyReason?: string;
+  changes?: FileChangeItem[];
+  branchName?: string;
+  commitSha?: string;
+  commitMessage?: string;
+  pullRequestNumber?: number;
+  pullRequestUrl?: string;
+  pullRequestTitle?: string;
+  validationStatus?: 'PASSED' | 'FAILED' | 'SKIPPED';
+  verificationStatus?: 'VERIFIED' | 'STILL_PRESENT' | 'REGRESSION' | 'UNAVAILABLE';
+  validationResults?: ValidationReport;
+}
+
+export interface RemediationProposal {
+  findingId: string;
+  canFix: boolean;
+  safetyReason: string;
+  explanation: string;
+  commitMessage: string;
+  prTitle: string;
+  prBody: string;
+  changes: FileChangeItem[];
+  validation: ValidationReport;
+  verificationStatus: 'VERIFIED' | 'STILL_PRESENT' | 'REGRESSION' | 'UNAVAILABLE';
+  suggestedBranchName: string;
+}
+
+export interface PullRequestResult {
+  success: boolean;
+  targetRepo?: string;
+  notice?: string;
+  pullRequest: {
+    number: number;
+    url: string;
+    title: string;
+    state: string;
+    createdAt: string;
+  };
+  branch: {
+    name: string;
+    ref: string;
+    url: string;
+  };
+  commit: {
+    sha: string;
+    message: string;
+    url: string;
+  };
+  verificationStatus: 'VERIFIED' | 'STILL_PRESENT' | 'REGRESSION' | 'UNAVAILABLE';
+  validationResults?: ValidationReport;
+  warning?: string;
 }
 
 export interface VerificationResult {
@@ -90,6 +163,9 @@ export interface AnalysisSession {
   status: 'IDLE' | 'PREPARING' | 'ANALYZING' | 'EXPLAINING' | 'COMPLETED' | 'FAILED';
   currentStage?: string;
   error?: string;
+  repoOwner?: string;
+  repoName?: string;
+  defaultBranch?: string;
 }
 
 export interface CapabilityProviderInfo {

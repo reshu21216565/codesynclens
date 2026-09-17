@@ -12,7 +12,11 @@ import {
   FileCode,
   ShieldAlert,
   Loader2,
-  Info
+  Info,
+  GitPullRequest,
+  ExternalLink,
+  GitBranch,
+  GitCommit
 } from 'lucide-react';
 
 interface FindingDetailProps {
@@ -22,6 +26,7 @@ interface FindingDetailProps {
   onApplyFix: (finding: Finding, updatedCode: string) => Promise<void>;
   onMarkStatus: (findingId: string, status: Finding['status']) => void;
   onRunVerification: (finding: Finding) => Promise<void>;
+  onOpenRemediation?: (finding: Finding) => void;
 }
 
 export const FindingDetail: React.FC<FindingDetailProps> = ({
@@ -30,7 +35,8 @@ export const FindingDetail: React.FC<FindingDetailProps> = ({
   onClose,
   onApplyFix,
   onMarkStatus,
-  onRunVerification
+  onRunVerification,
+  onOpenRemediation
 }) => {
   const [showFixPreview, setShowFixPreview] = useState(false);
   const [explaining, setExplaining] = useState(false);
@@ -219,6 +225,53 @@ export const FindingDetail: React.FC<FindingDetailProps> = ({
             </div>
           </div>
 
+          {/* GitHub Pull Request Live Card (if PR created) */}
+          {finding.fix?.pullRequestUrl && (
+            <div className="p-4 rounded-xl bg-zinc-900 text-white space-y-3 shadow-md border border-zinc-800">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className="w-7 h-7 rounded-lg bg-purple-500/20 text-purple-300 flex items-center justify-center">
+                    <GitPullRequest className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-bold text-zinc-100">
+                        Pull Request #{finding.fix.pullRequestNumber} Active
+                      </span>
+                      <span className="text-[10px] px-1.5 py-0.2 rounded bg-emerald-500 text-zinc-950 font-bold uppercase">
+                        {finding.status}
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-zinc-400">
+                      Automated remediation branch created & pushed to origin
+                    </p>
+                  </div>
+                </div>
+
+                <a
+                  href={finding.fix.pullRequestUrl}
+                  target="_blank"
+                  rel="noreferrer noopener"
+                  className="px-3 py-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-bold text-xs flex items-center gap-1.5 transition-colors shadow-xs"
+                >
+                  <span>Open PR #{finding.fix.pullRequestNumber}</span>
+                  <ExternalLink className="w-3.5 h-3.5" />
+                </a>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3 pt-2 border-t border-zinc-800 text-[11px] font-mono">
+                <div className="flex items-center gap-1.5 text-zinc-300 truncate">
+                  <GitBranch className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                  <span className="truncate">{finding.fix.branchName}</span>
+                </div>
+                <div className="flex items-center gap-1.5 text-zinc-400 truncate">
+                  <GitCommit className="w-3.5 h-3.5 text-zinc-500 shrink-0" />
+                  <span>Commit: {finding.fix.commitSha?.slice(0, 7) || 'HEAD'}</span>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Verification Status (if verified) */}
           {finding.verification && (
             <div
@@ -295,6 +348,29 @@ export const FindingDetail: React.FC<FindingDetailProps> = ({
           </div>
 
           <div className="flex items-center gap-2">
+            {onOpenRemediation && !finding.fix?.pullRequestUrl && (
+              <button
+                onClick={() => onOpenRemediation(finding)}
+                id="btn-fix-create-pr"
+                className="px-4 py-1.5 text-xs font-bold text-white bg-purple-700 hover:bg-purple-800 rounded-md shadow-xs transition-colors flex items-center gap-1.5"
+              >
+                <GitPullRequest className="w-3.5 h-3.5" />
+                <span>Fix & Create PR</span>
+              </button>
+            )}
+
+            {finding.fix?.pullRequestUrl && (
+              <a
+                href={finding.fix.pullRequestUrl}
+                target="_blank"
+                rel="noreferrer noopener"
+                className="px-4 py-1.5 text-xs font-bold text-emerald-900 bg-emerald-100 hover:bg-emerald-200 border border-emerald-300 rounded-md transition-colors flex items-center gap-1.5"
+              >
+                <GitPullRequest className="w-3.5 h-3.5 text-emerald-700" />
+                <span>View PR #{finding.fix.pullRequestNumber} ↗</span>
+              </a>
+            )}
+
             {finding.suggestedCode && !showFixPreview && (
               <button
                 onClick={() => setShowFixPreview(true)}
